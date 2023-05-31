@@ -11,7 +11,10 @@ aleo-rust = "0.4.2"
 axum = {version ="0.6.18", features=["ws", "tokio"]}
 axum-server = "0.5.1"
 eyre = "0.6.8"
+futures = "0.3.28"
 rand = "0.8.5"
 serde = "1.0.163"
+serde_json = "1.0.96"
 structopt = "0.3.26"
 tokio = { version = "1.28.2", features = ["full"]}
+tower-http = {version="0.4.0", features=["cors"]}

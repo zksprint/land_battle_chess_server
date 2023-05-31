@@ -2,14 +2,24 @@ use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
 
 use aleo_rust::{Address, Testnet3};
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
+    body::{self},
+    extract::{
+        ws::{Message, WebSocket},
+        Path, Query, State, WebSocketUpgrade,
+    },
+    http::{HeaderValue, Method, Response, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
 };
+use futures::stream::StreamExt;
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    RwLock,
+};
+
+use tower_http::cors::CorsLayer;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -17,6 +27,12 @@ async fn main() -> eyre::Result<()> {
     let app = Router::new()
         .route("/join", get(join))
         .route("/join/:pubkey", get(join_get))
+        .route("/game/:game_id", get(enter_game))
+        .layer(
+            CorsLayer::new()
+                .allow_origin("http://localhost:8000".parse::<HeaderValue>().unwrap())
+                .allow_methods([Method::GET, Method::POST]),
+        )
         .with_state(app_state);
 
     let addr = SocketAddr::from_str("127.0.0.1:3000").unwrap();
@@ -30,7 +46,7 @@ async fn main() -> eyre::Result<()> {
 #[derive(Default)]
 struct App {
     user_map: HashMap<Address<Testnet3>, User>,
-    game_map: HashMap<u64, Game>,
+    game_map: HashMap<u64, Arc<RwLock<Game>>>,
 }
 
 type AppState = Arc<RwLock<App>>;
@@ -45,12 +61,55 @@ struct User {
 struct Player {
     pubkey: Address<Testnet3>,
     is_player2: bool,
+    rx: Option<UnboundedReceiver<GameMessage>>,
+    tx: UnboundedSender<GameMessage>,
 }
 
 struct Game {
     game_id: u64,
     players: (Player, Player),
     cur_player: usize,
+}
+
+impl Game {
+    fn opponent(&self, player: Address<Testnet3>) -> &Player {
+        if self.players.0.pubkey == player {
+            &self.players.1
+        } else {
+            &self.players.0
+        }
+    }
+
+    fn self_player(&self, player: Address<Testnet3>) -> &Player {
+        if self.players.0.pubkey == player {
+            &self.players.0
+        } else {
+            &self.players.1
+        }
+    }
+
+    fn new(game_id: u64, player1: Address<Testnet3>, player2: Address<Testnet3>) -> Self {
+        let (tx1, rx1) = unbounded_channel::<GameMessage>();
+        let (tx2, rx2) = unbounded_channel::<GameMessage>();
+        Game {
+            game_id,
+            players: (
+                Player {
+                    pubkey: player1,
+                    is_player2: false,
+                    rx: Some(rx1),
+                    tx: tx1,
+                },
+                Player {
+                    pubkey: player2,
+                    is_player2: true,
+                    rx: Some(rx2),
+                    tx: tx2,
+                },
+            ),
+            cur_player: 0,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,7 +173,11 @@ async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl 
                     .user_map
                     .entry(usrs[0].pubkey)
                     .and_modify(|u| u.game_id = game_id);
-                game_id.unwrap_or_default()
+
+                let game_id = game_id.unwrap();
+                let game = Arc::new(RwLock::new(Game::new(game_id, usrs[0].pubkey, pubkey)));
+                state.game_map.insert(game_id, game);
+                game_id
             };
             return (StatusCode::OK, Json(AppResponse::JoinResult { game_id }));
         }
@@ -155,25 +218,84 @@ async fn join_get(
     }
 }
 
-/*
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    user_agent: Option<TypedHeader<headers::UserAgent>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-) -> impl IntoResponse {
-    let user_agent = if let Some(TypedHeader(user_agent)) = user_agent {
-        user_agent.to_string()
-    } else {
-        String::from("Unknown browser")
-    };
-    println!("`{user_agent}` at {addr} connected.");
-    // finalize the upgrade process by returning upgrade callback.
-    // we can customize the callback by sending additional info such as address.
-    ws.on_upgrade(move |socket| handle_socket(socket, addr))
+#[derive(Debug, Deserialize)]
+struct EnterGame {
+    player: Address<Testnet3>,
+    game_id: u64,
 }
- */
-/*
-#[derive(Serialize)]
+
+async fn enter_game(
+    Query(query): Query<EnterGame>,
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    let EnterGame { player, game_id } = query;
+    let state = state.read().await;
+    let game = state.game_map.get(&game_id);
+    if let Some(game) = game {
+        {
+            let game = game.read().await;
+            if game.players.0.pubkey != query.player && game.players.1.pubkey != query.player {
+                return Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body::boxed(body::Empty::new()))
+                    .unwrap();
+            }
+        }
+        let game = game.clone();
+        drop(state);
+        ws.on_upgrade(move |ws| handle_socket(ws, game, player))
+    } else {
+        Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(body::boxed(body::Empty::new()))
+            .unwrap()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 enum GameMessage {
-    Move { pubkey: A },
-} */
+    Move { pubkey: Address<Testnet3> },
+}
+
+/// Actual websocket statemachine (one will be spawned per connection)
+async fn handle_socket(ws: WebSocket, _game: Arc<RwLock<Game>>, _player: Address<Testnet3>) {
+    let (_sender, _receiver) = ws.split();
+    /*
+    let opp = game.opponent(player);
+    let self_player = game.self_player(player);
+    let mut rx = self_player.rx.take().unwrap();
+    loop {
+        tokio::select! {
+            Some(Ok(msg)) = receiver.next() => {
+                match msg {
+                    Message::Text(t) => {
+                        let Ok(msg) = serde_json::from_str::<GameMessage>(&t) else {
+                            return;
+                        };
+                    },
+                    Message::Close(_) => {
+                        return;
+                    }
+                    _ =>{}
+                }
+            },
+            msg = rx.recv() => {
+
+            }
+        }
+    }
+    */
+}
+
+/// helper to print contents of messages to stdout. Has special treatment for Close.
+fn process_message(msg: Message) -> eyre::Result<bool> {
+    match msg {
+        Message::Text(t) => {
+            let _msg: GameMessage = serde_json::from_str(&t)?;
+            Ok(true)
+        }
+        Message::Close(_c) => Ok(false),
+        _ => Ok(true),
+    }
+}
