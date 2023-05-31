@@ -2,10 +2,10 @@ use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
 
 use aleo_rust::{Address, Testnet3};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 async fn main() -> eyre::Result<()> {
     let app_state = AppState::default();
     let app = Router::new()
-        .route("/join", post(join))
+        .route("/join", get(join))
         .route("/join/:pubkey", get(join_get))
         .with_state(app_state);
 
@@ -65,12 +65,12 @@ enum AppResponse {
     JoinResult { game_id: u64 },
 }
 
-// curl -X POST 'http://127.0.0.1:3000/join' -H 'Content-Type: application/json' -d '{"pubkey":"aleo17e9qgem7pvh44yw6takrrtvnf9m6urpmlwf04ytghds7d2dfdcpqtcy8cj","access_code":"123"}'
-async fn join(State(state): State<AppState>, Json(input): Json<Join>) -> impl IntoResponse {
+// curl 'http://127.0.0.1:3000/join?pubkey=aleo17e9qgem7pvh44yw6takrrtvnf9m6urpmlwf04ytghds7d2dfdcpqtcy8cj&access_code=123'
+async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl IntoResponse {
     let Join {
         pubkey,
         access_code,
-    } = input;
+    } = query;
     let mut state = state.write().await;
     let usrs: Vec<_> = state
         .user_map
@@ -138,12 +138,6 @@ async fn join_get(
     Path(pubkey): Path<Address<Testnet3>>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    /*
-    let Ok(pubkey) = Address::<Testnet3>::from_str(&pubkey) else {
-        return (StatusCode::BAD_REQUEST, Json(AppResponse::Error("invalid pubkey".into())));
-    };
-    */
-
     let state = state.read().await;
 
     if let Some(usr) = state.user_map.get(&pubkey) {
@@ -161,6 +155,23 @@ async fn join_get(
     }
 }
 
+/*
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    user_agent: Option<TypedHeader<headers::UserAgent>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    let user_agent = if let Some(TypedHeader(user_agent)) = user_agent {
+        user_agent.to_string()
+    } else {
+        String::from("Unknown browser")
+    };
+    println!("`{user_agent}` at {addr} connected.");
+    // finalize the upgrade process by returning upgrade callback.
+    // we can customize the callback by sending additional info such as address.
+    ws.on_upgrade(move |socket| handle_socket(socket, addr))
+}
+ */
 /*
 #[derive(Serialize)]
 enum GameMessage {
