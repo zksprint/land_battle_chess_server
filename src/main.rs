@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
 
 use aleo_rust::{Address, Testnet3};
 use axum::{
@@ -13,25 +13,48 @@ use axum::{
     Json, Router,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
+use land_battle_chess_rs::setup_log_dispatch;
+use log::info;
 use serde::{Deserialize, Serialize};
+use structopt::StructOpt;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     RwLock,
 };
 
 use tower_http::cors::CorsLayer;
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
+
+#[derive(Debug, StructOpt)]
+#[structopt(name = "land_battle")]
+struct Opt {
+    #[structopt(long)]
+    log_path: Option<PathBuf>,
+}
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    let opt = Opt::from_args();
+    setup_log_dispatch(opt.log_path)?
+        .level(log::LevelFilter::Error)
+        .level_for("land_battle_chess_rs", log::LevelFilter::Info)
+        .apply()?;
+
+    info!("land battle server running...");
+
     let app_state = AppState::default();
     let app = Router::new()
         .route("/join", get(join))
         .route("/join/:pubkey", get(join_get))
-        .route("/game/:game_id", get(enter_game))
+        .route("/game", get(enter_game))
         .layer(
             CorsLayer::new()
                 .allow_origin("http://localhost:8000".parse::<HeaderValue>().unwrap())
                 .allow_methods([Method::GET, Method::POST]),
+        )
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         )
         .with_state(app_state);
 
@@ -269,6 +292,9 @@ enum GameMessage {
         game_id: u64,
         pubkey: Address<Testnet3>,
     },
+    Hello {
+        game_id: u64,
+    },
     Role {
         // 连上ws后，server 通知角色分配
         game_id: u64,
@@ -300,6 +326,15 @@ enum GameMessage {
         flag_x: Option<u64>,
         flag_y: Option<u32>,
     },
+}
+
+async fn say_hello(ws: WebSocket) {
+    let (mut sender, _receiver) = ws.split();
+    let ret = sender
+        .send(Message::Text(
+            serde_json::to_string(&GameMessage::Hello { game_id: 123 }).unwrap(),
+        ))
+        .await;
 }
 
 /// Actual websocket statemachine (one will be spawned per connection)
