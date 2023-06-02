@@ -61,8 +61,8 @@ struct User {
 struct Player {
     pubkey: Address<Testnet3>,
     is_player2: bool,
-    rx: Option<UnboundedReceiver<GameMessage>>,
-    tx: UnboundedSender<GameMessage>,
+    connected: bool,
+    tx: Option<UnboundedSender<GameMessage>>,
 }
 
 struct Game {
@@ -72,19 +72,19 @@ struct Game {
 }
 
 impl Game {
-    fn opponent(&self, player: Address<Testnet3>) -> &Player {
+    fn opponent(&self, player: Address<Testnet3>) -> &mut Player {
         if self.players.0.pubkey == player {
-            &self.players.1
+            &mut self.players.1
         } else {
-            &self.players.0
+            &mut self.players.0
         }
     }
 
-    fn self_player(&self, player: Address<Testnet3>) -> &Player {
+    fn self_player(&mut self, player: Address<Testnet3>) -> &mut Player {
         if self.players.0.pubkey == player {
-            &self.players.0
+            &mut self.players.0
         } else {
-            &self.players.1
+            &mut self.players.1
         }
     }
 
@@ -97,14 +97,14 @@ impl Game {
                 Player {
                     pubkey: player1,
                     is_player2: false,
-                    rx: Some(rx1),
-                    tx: tx1,
+                    connected: false,
+                    tx: None,
                 },
                 Player {
                     pubkey: player2,
                     is_player2: true,
-                    rx: Some(rx2),
-                    tx: tx2,
+                    connected: false,
+                    tx: None,
                 },
             ),
             cur_player: 0,
@@ -261,6 +261,7 @@ json:
 #[serde(tag = "type", rename_all = "camelCase")]
 enum GameMessage {
     OpponentDisconnected {
+        // 对手下线
         game_id: u64,
         pubkey: Address<Testnet3>,
     },
@@ -277,13 +278,13 @@ enum GameMessage {
     Move {
         // 行棋方，通知server 行棋路线
         pubkey: Address<Testnet3>,
-        peace: u64,
+        piece: u64,
         x: u64, // 棋子坐标
         y: u32,
         target_x: u64, // 落子坐标
         target_y: u32,
     },
-    PeacePos {
+    PiecePos {
         // server 通知对手，行棋路线
         x: u64,
         y: u32,
@@ -291,9 +292,9 @@ enum GameMessage {
         target_y: u32,
     },
     Whisper {
-        // 对手通知server，落子坐标棋子信息，如果peace 是司令，同时告知军棋坐标
+        // 对手通知server，落子坐标棋子信息，如果piece 是司令，同时告知军棋坐标
         pubkey: Address<Testnet3>,
-        peace: u64,
+        piece: u64,
         x: u64,
         y: u32,
         flag_x: Option<u64>,
@@ -302,8 +303,17 @@ enum GameMessage {
 }
 
 /// Actual websocket statemachine (one will be spawned per connection)
-async fn handle_socket(ws: WebSocket, _game: Arc<RwLock<Game>>, _player: Address<Testnet3>) {
+async fn handle_socket(ws: WebSocket, game: Arc<RwLock<Game>>, player: Address<Testnet3>) {
     let (_sender, _receiver) = ws.split();
+    let (tx, rx) = unbounded_channel::<GameMessage>();
+
+    let opp_connected = {
+        let mut game = game.write().await;
+        let self_player = game.self_player(player);
+        self_player.connected = true;
+        let opp = game.opponent(player);
+        opp.connected
+    };
     /*
     let opp = game.opponent(player);
     let self_player = game.self_player(player);
