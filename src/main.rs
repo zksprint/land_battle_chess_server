@@ -12,7 +12,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use futures::stream::StreamExt;
+use futures::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -72,7 +72,7 @@ struct Game {
 }
 
 impl Game {
-    fn opponent(&self, player: Address<Testnet3>) -> &mut Player {
+    fn opponent(&mut self, player: Address<Testnet3>) -> &mut Player {
         if self.players.0.pubkey == player {
             &mut self.players.1
         } else {
@@ -304,20 +304,33 @@ enum GameMessage {
 
 /// Actual websocket statemachine (one will be spawned per connection)
 async fn handle_socket(ws: WebSocket, game: Arc<RwLock<Game>>, player: Address<Testnet3>) {
-    let (_sender, _receiver) = ws.split();
+    let (mut sender, _receiver) = ws.split();
     let (tx, rx) = unbounded_channel::<GameMessage>();
 
-    let opp_connected = {
+    let (opp_connected, game_id, player1, player2) = {
         let mut game = game.write().await;
         let self_player = game.self_player(player);
         self_player.connected = true;
         let opp = game.opponent(player);
-        opp.connected
+        (
+            opp.connected,
+            game.game_id,
+            game.players.0.pubkey,
+            game.players.1.pubkey,
+        )
     };
+
+    let ret = sender
+        .send(Message::Text(
+            serde_json::to_string(&GameMessage::Role {
+                game_id,
+                player1,
+                player2,
+            })
+            .unwrap(),
+        ))
+        .await;
     /*
-    let opp = game.opponent(player);
-    let self_player = game.self_player(player);
-    let mut rx = self_player.rx.take().unwrap();
     loop {
         tokio::select! {
             Some(Ok(msg)) = receiver.next() => {
