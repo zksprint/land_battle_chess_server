@@ -37,7 +37,7 @@ async fn main() -> eyre::Result<()> {
     let opt = Opt::from_args();
     setup_log_dispatch(opt.log_path)?
         .level(log::LevelFilter::Error)
-        .level_for("land_battle_chess_rs", log::LevelFilter::Info)
+        .level_for("land_battle_chess_rs", log::LevelFilter::Trace)
         .apply()?;
 
     info!("land battle server running...");
@@ -69,7 +69,7 @@ async fn main() -> eyre::Result<()> {
 #[derive(Default)]
 struct App {
     user_map: HashMap<Address<Testnet3>, User>,
-    game_map: HashMap<u64, Arc<RwLock<Game>>>,
+    game_map: HashMap<String, Arc<RwLock<Game>>>,
 }
 
 type AppState = Arc<RwLock<App>>;
@@ -78,7 +78,7 @@ type AppState = Arc<RwLock<App>>;
 struct User {
     pubkey: Address<Testnet3>,
     access_code: String,
-    game_id: Option<u64>,
+    game_id: Option<String>,
 }
 
 struct Player {
@@ -89,7 +89,7 @@ struct Player {
 }
 
 struct Game {
-    game_id: u64,
+    game_id: String,
     players: (Player, Player),
     cur_player: usize,
 }
@@ -111,9 +111,7 @@ impl Game {
         }
     }
 
-    fn new(game_id: u64, player1: Address<Testnet3>, player2: Address<Testnet3>) -> Self {
-        let (tx1, rx1) = unbounded_channel::<GameMessage>();
-        let (tx2, rx2) = unbounded_channel::<GameMessage>();
+    fn new(game_id: String, player1: Address<Testnet3>, player2: Address<Testnet3>) -> Self {
         Game {
             game_id,
             players: (
@@ -144,7 +142,7 @@ struct Join {
 #[derive(Serialize)]
 enum AppResponse {
     Error(String),
-    JoinResult { game_id: u64 },
+    JoinResult { game_id: String },
 }
 
 // curl 'http://127.0.0.1:3000/join?pubkey=aleo17e9qgem7pvh44yw6takrrtvnf9m6urpmlwf04ytghds7d2dfdcpqtcy8cj&access_code=123'
@@ -181,25 +179,29 @@ async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl 
                     .user_map
                     .entry(pubkey)
                     .and_modify(|u| u.access_code = access_code);
-                0
+                String::new()
             } else {
-                let game_id = Some(rand::random::<u64>());
+                let game_id = Some(rand::random::<u64>().to_string());
                 state.user_map.insert(
                     pubkey,
                     User {
                         pubkey,
                         access_code,
-                        game_id,
+                        game_id: game_id.clone(),
                     },
                 );
                 state
                     .user_map
                     .entry(usrs[0].pubkey)
-                    .and_modify(|u| u.game_id = game_id);
+                    .and_modify(|u| u.game_id = game_id.clone());
 
-                let game_id = game_id.unwrap();
-                let game = Arc::new(RwLock::new(Game::new(game_id, usrs[0].pubkey, pubkey)));
-                state.game_map.insert(game_id, game);
+                let game_id = game_id.clone().unwrap();
+                let game = Arc::new(RwLock::new(Game::new(
+                    game_id.clone(),
+                    usrs[0].pubkey,
+                    pubkey,
+                )));
+                state.game_map.insert(game_id.clone(), game);
                 game_id
             };
             return (StatusCode::OK, Json(AppResponse::JoinResult { game_id }));
@@ -213,7 +215,12 @@ async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl 
                     game_id: None,
                 },
             );
-            return (StatusCode::OK, Json(AppResponse::JoinResult { game_id: 0 }));
+            return (
+                StatusCode::OK,
+                Json(AppResponse::JoinResult {
+                    game_id: "0".into(),
+                }),
+            );
         }
         _ => unreachable!(),
     }
@@ -230,7 +237,7 @@ async fn join_get(
         return (
             StatusCode::OK,
             Json(AppResponse::JoinResult {
-                game_id: usr.game_id.unwrap_or_default(),
+                game_id: usr.game_id.clone().unwrap_or("0".into()),
             }),
         );
     } else {
@@ -244,7 +251,7 @@ async fn join_get(
 #[derive(Debug, Deserialize)]
 struct EnterGame {
     player: Address<Testnet3>,
-    game_id: u64,
+    game_id: String,
 }
 
 async fn enter_game(
@@ -285,19 +292,19 @@ json:
 enum GameMessage {
     OpponentDisconnected {
         // 对手下线
-        game_id: u64,
+        game_id: String,
         pubkey: Address<Testnet3>,
     },
     OpponentConnected {
-        game_id: u64,
+        game_id: String,
         pubkey: Address<Testnet3>,
     },
     Hello {
-        game_id: u64,
+        game_id: String,
     },
     Role {
         // 连上ws后，server 通知角色分配
-        game_id: u64,
+        game_id: String,
         player1: Address<Testnet3>,
         player2: Address<Testnet3>,
     },
@@ -328,17 +335,11 @@ enum GameMessage {
     },
 }
 
-async fn say_hello(ws: WebSocket) {
-    let (mut sender, _receiver) = ws.split();
-    let ret = sender
-        .send(Message::Text(
-            serde_json::to_string(&GameMessage::Hello { game_id: 123 }).unwrap(),
-        ))
-        .await;
-}
-
-/// Actual websocket statemachine (one will be spawned per connection)
-async fn handle_socket(ws: WebSocket, game: Arc<RwLock<Game>>, player: Address<Testnet3>) {
+async fn player_loop(
+    ws: WebSocket,
+    game: Arc<RwLock<Game>>,
+    player: Address<Testnet3>,
+) -> eyre::Result<()> {
     let (mut sender, _receiver) = ws.split();
     let (tx, rx) = unbounded_channel::<GameMessage>();
 
@@ -349,13 +350,13 @@ async fn handle_socket(ws: WebSocket, game: Arc<RwLock<Game>>, player: Address<T
         let opp = game.opponent(player);
         (
             opp.connected,
-            game.game_id,
+            game.game_id.clone(),
             game.players.0.pubkey,
             game.players.1.pubkey,
         )
     };
 
-    let ret = sender
+    sender
         .send(Message::Text(
             serde_json::to_string(&GameMessage::Role {
                 game_id,
@@ -365,6 +366,13 @@ async fn handle_socket(ws: WebSocket, game: Arc<RwLock<Game>>, player: Address<T
             .unwrap(),
         ))
         .await;
+
+    Ok(())
+}
+
+/// Actual websocket statemachine (one will be spawned per connection)
+async fn handle_socket(ws: WebSocket, game: Arc<RwLock<Game>>, player: Address<Testnet3>) {
+    player_loop(ws, game, player).await;
     /*
     loop {
         tokio::select! {
