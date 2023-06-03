@@ -55,7 +55,7 @@ async fn main() -> eyre::Result<()> {
         .route("/game", get(enter_game))
         .layer(
             CorsLayer::new()
-                .allow_origin("http://localhost:8000".parse::<HeaderValue>().unwrap())
+                .allow_origin("http://localhost:8080".parse::<HeaderValue>().unwrap())
                 .allow_methods([Method::GET, Method::POST]),
         )
         .layer(
