@@ -13,18 +13,17 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use eyre::Context;
+use eyre::{bail, Context};
+
 use futures::stream::SplitSink;
 use futures::{sink::SinkExt, stream::StreamExt};
 use land_battle_chess_rs::game_logic::{arb_piece, PieceInfo, INVALID_X, INVALID_Y};
 use land_battle_chess_rs::{setup_log_dispatch, types::*};
 use log::{error, info, warn};
-use serde::Deserialize;
 use structopt::StructOpt;
-use tokio::sync::oneshot;
+
 use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    oneshot::Sender,
+    mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
     RwLock,
 };
 
@@ -72,10 +71,12 @@ async fn main() -> eyre::Result<()> {
     Ok(())
 }
 
+type GameId = u64;
+
 #[derive(Default)]
 struct App {
     user_map: HashMap<Address<Testnet3>, User>,
-    game_map: HashMap<String, Game>,
+    game_map: HashMap<GameId, Game>,
 }
 
 type AppState = Arc<RwLock<App>>;
@@ -84,19 +85,39 @@ type AppState = Arc<RwLock<App>>;
 struct User {
     pubkey: Address<Testnet3>,
     access_code: String,
-    game_id: Option<String>,
+    game_id: Option<GameId>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PlayerState {
+    Disconnected,
+    Connected,
+    Ready,
 }
 
 struct Player {
     pubkey: Address<Testnet3>,
-    connected: bool,
+    state: PlayerState,
     piece: Option<PieceInfo>,
 }
 
-type GameServiceSender = UnboundedSender<(Address<Testnet3>, WebSocket, Sender<()>)>;
+#[derive(Debug)]
+struct PlayerConn {
+    pubkey: Address<Testnet3>,
+    ws_tx: SplitSink<WebSocket, Message>,
+    exit_signal: Sender<()>,
+}
+
+#[derive(Debug)]
+enum GameServiceMsg {
+    PlayerConnected(PlayerConn),
+    GameMessage(Address<Testnet3>, GameMessage),
+}
+
+type GameServiceSender = UnboundedSender<GameServiceMsg>;
 
 struct GameService {
-    game_id: String,
+    game_id: GameId,
     players: (Player, Player),
     cur_player: Address<Testnet3>,
 }
@@ -108,91 +129,55 @@ struct Game {
 }
 
 impl GameService {
-    async fn run(
-        mut self,
-        mut rx: UnboundedReceiver<(Address<Testnet3>, WebSocket, Sender<()>)>,
-        _app_state: AppState,
-    ) {
-        let (game_id, player1, player2) = (
-            self.game_id.clone(),
-            self.players.0.pubkey,
-            self.players.1.pubkey,
-        );
-        let mut socket_map = HashMap::new();
-        loop {
-            tokio::select! {
-                Some((addr, ws, exit)) = rx.recv() => {
-                    match self.player_mut(addr) {
-                        Some(player) => {
-                            if player.connected {
-                                todo!()
+    async fn run(mut self, mut rx: UnboundedReceiver<GameServiceMsg>, _app_state: AppState) {
+        let (game_id, player1, player2) =
+            (self.game_id, self.players.0.pubkey, self.players.1.pubkey);
+        let mut conns = (None, None);
+        while let Some(data) = rx.recv().await {
+            match data {
+                GameServiceMsg::PlayerConnected(mut conn) => match self.player_mut(conn.pubkey) {
+                    Some(player) => {
+                        if player.state != PlayerState::Disconnected {
+                            todo!()
+                        } else {
+                            if let Err(e) = conn
+                                .ws_tx
+                                .send(
+                                    GameMessage::Role {
+                                        game_id,
+                                        player1,
+                                        player2,
+                                    }
+                                    .try_into()
+                                    .unwrap(),
+                                )
+                                .await
+                            {
+                                warn!("[{}] send role to {}, error: {:?}", game_id, conn.pubkey, e);
+                                continue;
+                            }
+                            player.state = PlayerState::Connected;
+                            if conn.pubkey == player1 {
+                                conns.0 = Some(conn)
                             } else {
-                                let (mut ws_tx, ws_rx) = ws.split();
-
-                                if let Err(e) = ws_tx
-                                    .send(
-                                        GameMessage::Role {
-                                            game_id: game_id.clone(),
-                                            player1,
-                                            player2,
-                                        }
-                                        .try_into().unwrap()
-                                    )
-                                    .await {
-                                    warn!("[{}] send role to {}, error: {:?}", self.game_id, addr, e);
-                                    continue;
-                                }
-                                player.connected = true;
-                                socket_map.insert(addr, (ws_tx, ws_rx, exit));
-                            }
-                        },
-                        None => {
-                            ws.close().await;
+                                conns.1 = Some(conn)
+                            };
                         }
                     }
-                }
-            }
-
-            if socket_map.len() == 2 {
-                break;
-            }
-        }
-
-        let (mut ws_tx1, mut ws_rx1, _exit1) = socket_map.remove(&player1).unwrap();
-        let (mut ws_tx2, mut ws_rx2, _exit2) = socket_map.remove(&player2).unwrap();
-        let connected_msg: Message = GameMessage::Ready {
-            game_id: self.game_id.clone(),
-        }
-        .try_into()
-        .unwrap();
-        ws_tx1.send(connected_msg.clone()).await;
-        ws_tx2.send(connected_msg).await;
-
-        'game_loop: loop {
-            tokio::select! {
-                Some(req) = ws_rx1.next() => {
-                    match req {
-                        Ok(msg) => {
-                            if let Err(_e) = self.process_player_message(msg, player1, &mut ws_tx1, &mut ws_tx2).await {
-                                break 'game_loop;
-                            }
-                        }
-                        Err(e) => {
-                            error!("recv msg error: {:?}", e);
-                            break 'game_loop;
-                        }
+                    None => {
+                        conn.exit_signal.send(()).await.unwrap();
                     }
-                }
-                Some(req) = ws_rx2.next() => {
-                    match req {
-                        Ok(msg) => {
-                            if let Err(_e) = self.process_player_message(msg, player2, &mut ws_tx2, &mut ws_tx1).await {
-                                break 'game_loop;
-                            }
-                        }
-                        Err(e) => {
-                            error!("recv msg error: {:?}", e);
-                            break 'game_loop;
+                },
+
+                GameServiceMsg::GameMessage(pubkey, msg) => {
+                    if let (Some(player1), Some(player2)) = (&mut conns.0, &mut conns.1) {
+                        let (tx, opp_tx) = if pubkey == player1.pubkey {
+                            (&mut player1.ws_tx, &mut player2.ws_tx)
+                        } else {
+                            (&mut player2.ws_tx, &mut player1.ws_tx)
+                        };
+                        if let Err(e) = self.process_player_message(msg, pubkey, tx, opp_tx).await {
+                            error!("process player:{} message, error:{:?}", pubkey, e);
                         }
                     }
                 }
@@ -202,18 +187,30 @@ impl GameService {
 
     async fn process_player_message(
         &mut self,
-        msg: Message,
-        player: Address<Testnet3>,
+        msg: GameMessage,
+        pubkey: Address<Testnet3>,
         player_tx: &mut SplitSink<WebSocket, Message>,
         opp_tx: &mut SplitSink<WebSocket, Message>,
     ) -> eyre::Result<()> {
-        let Message::Text(text) = msg else {
-            return Ok(());
-        };
-
-        let game_id = self.game_id.clone();
-        let msg: GameMessage = serde_json::from_str(&text).wrap_err("deserialize")?;
+        let game_id = self.game_id;
         match msg {
+            GameMessage::Ready { .. } => {
+                let player = self.player_mut(pubkey).unwrap();
+                player.state = PlayerState::Ready;
+
+                if let Some(opp) = self.opponent(pubkey) {
+                    if opp.state == PlayerState::Ready {
+                        let msg: Message = GameMessage::GameStart {
+                            game_id,
+                            turn: self.cur_player,
+                        }
+                        .try_into()
+                        .unwrap();
+                        player_tx.send(msg.clone()).await;
+                        opp_tx.send(msg).await;
+                    }
+                }
+            }
             GameMessage::Move {
                 piece,
                 x,
@@ -223,12 +220,12 @@ impl GameService {
                 flag_x,
                 flag_y,
             } => {
-                if self.cur_player != player {
-                    warn!("[{}] not {} turn", game_id, player);
+                if self.cur_player != pubkey {
+                    warn!("[{}] not {} turn", game_id, pubkey);
                     return Ok(());
                 };
 
-                let player = self.player_mut(player).unwrap();
+                let player = self.player_mut(pubkey).unwrap();
                 if player.piece.is_some() {
                     warn!("[{}] player:{} has piece", game_id, player.pubkey);
                     return Ok(());
@@ -263,8 +260,8 @@ impl GameService {
                 flag_x,
                 flag_y,
             } => {
-                if self.cur_player == player {
-                    warn!("[{}] unexpect whisper from {}", game_id, player);
+                if self.cur_player == pubkey {
+                    warn!("[{}] unexpect whisper from {}", game_id, pubkey);
                     return Ok(());
                 };
 
@@ -275,7 +272,7 @@ impl GameService {
                     flag_x: flag_x.unwrap_or(INVALID_X),
                     flag_y: flag_y.unwrap_or(INVALID_Y),
                 };
-                let player = self.player_mut(player).unwrap();
+                let player = self.player_mut(pubkey).unwrap();
                 let attacker = player.piece.take().unwrap();
                 let piece_move = arb_piece(attacker, target);
 
@@ -287,7 +284,6 @@ impl GameService {
         }
         Ok(())
     }
-
     fn opponent(&self, player: Address<Testnet3>) -> Option<&Player> {
         if self.players.0.pubkey == player {
             Some(&self.players.1)
@@ -298,16 +294,17 @@ impl GameService {
         }
     }
 
-    fn player(&self, player: Address<Testnet3>) -> Option<&Player> {
-        if self.players.0.pubkey == player {
-            Some(&self.players.0)
-        } else if self.players.1.pubkey == player {
-            Some(&self.players.1)
-        } else {
-            None
-        }
-    }
-
+    /*
+       fn player(&self, player: Address<Testnet3>) -> Option<&Player> {
+           if self.players.0.pubkey == player {
+               Some(&self.players.0)
+           } else if self.players.1.pubkey == player {
+               Some(&self.players.1)
+           } else {
+               None
+           }
+       }
+    */
     fn player_mut(&mut self, player: Address<Testnet3>) -> Option<&mut Player> {
         if self.players.0.pubkey == player {
             Some(&mut self.players.0)
@@ -318,18 +315,18 @@ impl GameService {
         }
     }
 
-    fn new(game_id: String, player1: Address<Testnet3>, player2: Address<Testnet3>) -> Self {
+    fn new(game_id: GameId, player1: Address<Testnet3>, player2: Address<Testnet3>) -> Self {
         GameService {
             game_id,
             players: (
                 Player {
                     pubkey: player1,
-                    connected: false,
+                    state: PlayerState::Disconnected,
                     piece: None,
                 },
                 Player {
                     pubkey: player2,
-                    connected: false,
+                    state: PlayerState::Disconnected,
                     piece: None,
                 },
             ),
@@ -355,15 +352,15 @@ async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl 
     match usrs.len() {
         2 => {
             if usrs[0].pubkey != pubkey && usrs[1].pubkey != pubkey {
-                return (
+                (
                     StatusCode::BAD_REQUEST,
                     Json(AppResponse::Error("access code used".into())),
-                );
+                )
             } else {
-                return (
+                (
                     StatusCode::BAD_REQUEST,
                     Json(AppResponse::Error("game started".into())),
-                );
+                )
             }
         }
         1 => {
@@ -372,39 +369,39 @@ async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl 
                     .user_map
                     .entry(pubkey)
                     .and_modify(|u| u.access_code = access_code);
-                String::new()
+                0
             } else {
-                let game_id = Some(rand::random::<u64>().to_string());
+                let game_id = Some(rand::random::<u64>());
                 write_state.user_map.insert(
                     pubkey,
                     User {
                         pubkey,
                         access_code,
-                        game_id: game_id.clone(),
+                        game_id,
                     },
                 );
                 write_state
                     .user_map
                     .entry(usrs[0].pubkey)
-                    .and_modify(|u| u.game_id = game_id.clone());
+                    .and_modify(|u| u.game_id = game_id);
 
-                let game_id = game_id.clone().unwrap();
+                let game_id = game_id.unwrap_or_default();
                 let (tx, rx) = unbounded_channel();
                 let game = Game {
                     players: (usrs[0].pubkey, pubkey),
                     tx,
                 };
-                let game_svc = GameService::new(game_id.clone(), usrs[0].pubkey, pubkey);
+                let game_svc = GameService::new(game_id, usrs[0].pubkey, pubkey);
                 tokio::spawn({
                     let state = state.clone();
                     async {
                         game_svc.run(rx, state).await;
                     }
                 });
-                write_state.game_map.insert(game_id.clone(), game);
+                write_state.game_map.insert(game_id, game);
                 game_id
             };
-            return (StatusCode::OK, Json(AppResponse::JoinResult { game_id }));
+            (StatusCode::OK, Json(AppResponse::JoinResult { game_id }))
         }
         0 => {
             write_state.user_map.insert(
@@ -415,12 +412,7 @@ async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl 
                     game_id: None,
                 },
             );
-            return (
-                StatusCode::OK,
-                Json(AppResponse::JoinResult {
-                    game_id: "0".into(),
-                }),
-            );
+            (StatusCode::OK, Json(AppResponse::JoinResult { game_id: 0 }))
         }
         _ => unreachable!(),
     }
@@ -434,24 +426,18 @@ async fn join_get(
     let state = state.read().await;
 
     if let Some(usr) = state.user_map.get(&pubkey) {
-        return (
+        (
             StatusCode::OK,
             Json(AppResponse::JoinResult {
-                game_id: usr.game_id.clone().unwrap_or("0".into()),
+                game_id: usr.game_id.unwrap_or_default(),
             }),
-        );
+        )
     } else {
-        return (
+        (
             StatusCode::BAD_REQUEST,
             Json(AppResponse::Error("user not found".into())),
-        );
+        )
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct EnterGame {
-    player: Address<Testnet3>,
-    game_id: String,
 }
 
 async fn enter_game(
@@ -465,7 +451,6 @@ async fn enter_game(
     info!("enter game");
     if let Some(game) = game {
         {
-            info!("game:{:?}, player:{}", game, player);
             if game.players.0 != player && game.players.1 != player {
                 return Response::builder()
                     .status(StatusCode::BAD_REQUEST)
@@ -477,7 +462,6 @@ async fn enter_game(
         drop(state);
         ws.on_upgrade(move |ws| handle_socket(ws, player, game_tx))
     } else {
-        info!("game_id:{:?} not found", game_id);
         Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body(body::boxed(body::Empty::new()))
@@ -486,13 +470,39 @@ async fn enter_game(
 }
 
 async fn handle_socket(ws: WebSocket, pubkey: Address<Testnet3>, game_tx: GameServiceSender) {
-    let (tx, rx) = oneshot::channel();
-    if let Err(e) = game_tx.send((pubkey, ws, tx)) {
-        error!("send game service, error: {:?}", e);
-        return;
+    async fn run(
+        ws: WebSocket,
+        pubkey: Address<Testnet3>,
+        game_tx: GameServiceSender,
+    ) -> eyre::Result<()> {
+        let (ws_tx, mut ws_rx) = ws.split();
+        let (tx, mut rx) = channel::<()>(1);
+        let msg = GameServiceMsg::PlayerConnected(PlayerConn {
+            pubkey,
+            ws_tx,
+            exit_signal: tx,
+        });
+        if let Err(e) = game_tx.send(msg) {
+            bail!("send game service, error: {:?}", e);
+        }
+
+        loop {
+            tokio::select! {
+                Some(data) = ws_rx.next() => {
+                    let data = data.wrap_err("recv")?;
+                    if let Message::Text(data) = data {
+                        let msg: GameMessage = serde_json::from_str(&data).wrap_err("deserialize")?;
+                        game_tx.send(GameServiceMsg::GameMessage(pubkey, msg));
+                    }
+                }
+                _ = rx.recv() => {
+                    return Ok(());
+                }
+            }
+        }
     }
-    if let Err(e) = rx.await {
-        error!("wait exit signal, error: {:?}", e);
-        return;
-    };
+
+    if let Err(e) = run(ws, pubkey, game_tx).await {
+        error!("player ws, error: {:?}", e);
+    }
 }

@@ -27,4 +27,9 @@ fn main() {
     let json_text = serde_json::to_string(&msg).unwrap();
     let msg: GameMessage = serde_json::from_str(&json_text).unwrap();
     println!("msg:{:?}", msg);
+    let msg = GameMessage::OpponentDisconnected { game_id: 123 };
+    let json_text = serde_json::to_string(&msg).unwrap();
+    println!("text:{}", json_text);
+    let msg: GameMessage = serde_json::from_str(&json_text).unwrap();
+    println!("msg:{:?}", msg);
 }

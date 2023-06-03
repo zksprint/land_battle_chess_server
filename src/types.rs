@@ -1,9 +1,11 @@
 use aleo_rust::{Address, Testnet3};
 use axum::extract::ws::Message;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
 
 use crate::game_logic::{Piece, PieceMove};
 
+#[serde_as]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 /*
 json:
@@ -14,17 +16,26 @@ json:
 pub enum GameMessage {
     OpponentDisconnected {
         // 对手下线
-        game_id: String,
+        #[serde_as(as = "DisplayFromStr")]
+        game_id: u64,
     },
     Ready {
-        game_id: String,
+        #[serde_as(as = "DisplayFromStr")]
+        game_id: u64,
+    },
+    GameStart {
+        #[serde_as(as = "DisplayFromStr")]
+        game_id: u64,
+        turn: Address<Testnet3>,
     },
     Hello {
-        game_id: String,
+        #[serde_as(as = "DisplayFromStr")]
+        game_id: u64,
     },
     Role {
         // 连上ws后，server 通知角色分配
-        game_id: String,
+        #[serde_as(as = "DisplayFromStr")]
+        game_id: u64,
         player1: Address<Testnet3>,
         player2: Address<Testnet3>,
     },
@@ -70,7 +81,17 @@ pub struct Join {
 }
 
 #[derive(Serialize)]
+#[serde_as]
 pub enum AppResponse {
     Error(String),
-    JoinResult { game_id: String },
+    JoinResult {
+        #[serde_as(as = "DisplayFromStr")]
+        game_id: u64,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EnterGame {
+    pub player: Address<Testnet3>,
+    pub game_id: u64,
 }
