@@ -80,8 +80,8 @@ pub struct Join {
     pub pubkey: Address<Testnet3>,
 }
 
-#[derive(Serialize)]
 #[serde_as]
+#[derive(Serialize)]
 pub enum AppResponse {
     Error(String),
     JoinResult {
