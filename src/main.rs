@@ -491,6 +491,7 @@ async fn handle_socket(ws: WebSocket, pubkey: Address<Testnet3>, game_tx: GameSe
                 Some(data) = ws_rx.next() => {
                     let data = data.wrap_err("recv")?;
                     if let Message::Text(data) = data {
+                        info!("ws recving {}", data);
                         let msg: GameMessage = serde_json::from_str(&data).wrap_err("deserialize")?;
                         game_tx.send(GameServiceMsg::GameMessage(pubkey, msg));
                     }
