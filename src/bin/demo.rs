@@ -21,6 +21,7 @@ fn main() {
         opp_flag_y: INVALID_Y,
         flag_x: 0,
         flag_y: 0,
+        game_winner: 0,
     };
     let msg = GameMessage::MoveResult(piece_move);
     let json_text = serde_json::to_string(&msg).unwrap();

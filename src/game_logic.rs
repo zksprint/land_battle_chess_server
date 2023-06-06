@@ -52,6 +52,8 @@ pub struct PieceMove {
     pub flag_y: u32,
     pub opp_flag_x: u32,
     pub opp_flag_y: u32,
+
+    pub game_winner: u32,
 }
 
 pub const INVALID_X: u32 = 5u32;
@@ -65,6 +67,7 @@ pub fn arb_piece(attacker: PieceInfo, target: PieceInfo) -> PieceMove {
     let mut flag_y = INVALID_Y;
     let mut opp_flag_x = INVALID_X;
     let mut opp_flag_y = INVALID_Y;
+    let mut game_winner = 0;
 
     if target.piece == Piece::Empty {
         attack_result = AttackResult::SimpleMove;
@@ -111,6 +114,12 @@ pub fn arb_piece(attacker: PieceInfo, target: PieceInfo) -> PieceMove {
         opp_flag_y = target.flag_y;
     }
 
+    if victim == Piece::Flag {
+        game_winner = 2;
+    } else if opp_victim == Piece::Flag {
+        game_winner = 1;
+    }
+
     PieceMove {
         x: attacker.x,
         y: attacker.y,
@@ -121,5 +130,6 @@ pub fn arb_piece(attacker: PieceInfo, target: PieceInfo) -> PieceMove {
         flag_y,
         opp_flag_x,
         opp_flag_y,
+        game_winner,
     }
 }
