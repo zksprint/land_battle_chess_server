@@ -36,6 +36,7 @@ pub enum GameMessage {
         // 连上ws后，server 通知角色分配
         #[serde_as(as = "DisplayFromStr")]
         game_id: u64,
+        arbiter: Address<Testnet3>,
         player1: Address<Testnet3>,
         player2: Address<Testnet3>,
     },

@@ -13,7 +13,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use eyre::{bail, Context};
+use eyre::{bail, eyre, Context};
 
 use futures::stream::SplitSink;
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -46,8 +46,14 @@ async fn main() -> eyre::Result<()> {
         .apply()?;
 
     info!("land battle server running...");
+    dotenv::dotenv()?;
 
-    let app_state = AppState::default();
+    let priv_key = std::env::var("ARBITER_PRIV_KEY").wrap_err("no arbiter privkey")?;
+    let arbiter = Address::<Testnet3>::from_str(&priv_key)
+        .map_err(|e| eyre!(e))
+        .wrap_err("parse arbiter privkey")?;
+
+    let app_state = App::init(arbiter);
     let app = Router::new()
         .route("/join", get(join))
         .route("/join/:pubkey", get(join_get))
@@ -73,10 +79,21 @@ async fn main() -> eyre::Result<()> {
 
 type GameId = u64;
 
-#[derive(Default)]
 struct App {
     user_map: HashMap<Address<Testnet3>, User>,
     game_map: HashMap<GameId, Game>,
+    arbiter: Address<Testnet3>,
+}
+
+impl App {
+    fn init(arbiter: Address<Testnet3>) -> Arc<RwLock<App>> {
+        let app = App {
+            arbiter,
+            user_map: HashMap::new(),
+            game_map: HashMap::new(),
+        };
+        Arc::new(RwLock::new(app))
+    }
 }
 
 type AppState = Arc<RwLock<App>>;
@@ -108,6 +125,7 @@ struct PlayerConn {
     exit_signal: Sender<()>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum GameServiceMsg {
     PlayerConnected(PlayerConn),
@@ -118,6 +136,7 @@ type GameServiceSender = UnboundedSender<GameServiceMsg>;
 
 struct GameService {
     game_id: GameId,
+    arbiter: Address<Testnet3>,
     players: (Player, Player),
     cur_player: Address<Testnet3>,
 }
@@ -130,8 +149,12 @@ struct Game {
 
 impl GameService {
     async fn run(mut self, mut rx: UnboundedReceiver<GameServiceMsg>, _app_state: AppState) {
-        let (game_id, player1, player2) =
-            (self.game_id, self.players.0.pubkey, self.players.1.pubkey);
+        let (game_id, player1, player2, arbiter) = (
+            self.game_id,
+            self.players.0.pubkey,
+            self.players.1.pubkey,
+            self.arbiter,
+        );
         let mut conns = (None, None);
         while let Some(data) = rx.recv().await {
             match data {
@@ -145,6 +168,7 @@ impl GameService {
                                 .send(
                                     GameMessage::Role {
                                         game_id,
+                                        arbiter,
                                         player1,
                                         player2,
                                     }
@@ -206,8 +230,8 @@ impl GameService {
                         }
                         .try_into()
                         .unwrap();
-                        player_tx.send(msg.clone()).await;
-                        opp_tx.send(msg).await;
+                        _ = player_tx.send(msg.clone()).await;
+                        _ = opp_tx.send(msg).await;
                     }
                 }
             }
@@ -277,8 +301,8 @@ impl GameService {
                 let piece_move = arb_piece(attacker, target);
 
                 let msg: Message = GameMessage::MoveResult(piece_move).try_into().unwrap();
-                player_tx.send(msg.clone()).await;
-                opp_tx.send(msg).await;
+                _ = player_tx.send(msg.clone()).await;
+                _ = opp_tx.send(msg).await;
             }
             _ => {}
         }
@@ -315,9 +339,15 @@ impl GameService {
         }
     }
 
-    fn new(game_id: GameId, player1: Address<Testnet3>, player2: Address<Testnet3>) -> Self {
+    fn new(
+        game_id: GameId,
+        arbiter: Address<Testnet3>,
+        player1: Address<Testnet3>,
+        player2: Address<Testnet3>,
+    ) -> Self {
         GameService {
             game_id,
+            arbiter,
             players: (
                 Player {
                     pubkey: player1,
@@ -348,6 +378,7 @@ async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl 
         .filter(|u| u.access_code == access_code)
         .cloned()
         .collect();
+    let arbiter = write_state.arbiter;
 
     match usrs.len() {
         2 => {
@@ -391,7 +422,7 @@ async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl 
                     players: (usrs[0].pubkey, pubkey),
                     tx,
                 };
-                let game_svc = GameService::new(game_id, usrs[0].pubkey, pubkey);
+                let game_svc = GameService::new(game_id, arbiter, usrs[0].pubkey, pubkey);
                 tokio::spawn({
                     let state = state.clone();
                     async {
@@ -493,7 +524,7 @@ async fn handle_socket(ws: WebSocket, pubkey: Address<Testnet3>, game_tx: GameSe
                     if let Message::Text(data) = data {
                         info!("ws recving {}", data);
                         let msg: GameMessage = serde_json::from_str(&data).wrap_err("deserialize")?;
-                        game_tx.send(GameServiceMsg::GameMessage(pubkey, msg));
+                        _ = game_tx.send(GameServiceMsg::GameMessage(pubkey, msg));
                     }
                 }
                 _ = rx.recv() => {

@@ -2,11 +2,9 @@ use std::str::FromStr;
 
 use aleo_rust::{Address, Testnet3};
 use land_battle_chess_rs::{
-    game_logic::{AttackResult, Piece, PieceMove, INVALID_X, INVALID_Y},
+    game_logic::{AttackResult, PieceMove, INVALID_X, INVALID_Y},
     types::GameMessage,
 };
-
-
 
 fn main() {
     let _addr = Address::<Testnet3>::from_str(
@@ -19,9 +17,10 @@ fn main() {
         target_x: 1,
         target_y: 2,
         attack_result: AttackResult::Draw,
-        opp_victim: Piece::Bomb,
-        flag_x: INVALID_X,
-        flag_y: INVALID_Y,
+        opp_flag_x: INVALID_X,
+        opp_flag_y: INVALID_Y,
+        flag_x: 0,
+        flag_y: 0,
     };
     let msg = GameMessage::MoveResult(piece_move);
     let json_text = serde_json::to_string(&msg).unwrap();
