@@ -19,7 +19,7 @@ use indoc::indoc;
 
 use futures::stream::SplitSink;
 use futures::{sink::SinkExt, stream::StreamExt};
-use land_battle_chess_rs::game_logic::{arb_piece, PieceInfo, INVALID_X, INVALID_Y};
+use land_battle_chess_rs::game_logic::{compare_piece, PieceInfo};
 use land_battle_chess_rs::{setup_log_dispatch, types::*};
 use log::{error, info, warn};
 use structopt::StructOpt;
@@ -262,8 +262,8 @@ impl GameService {
                     piece,
                     x,
                     y,
-                    flag_x: flag_x.unwrap_or(INVALID_X),
-                    flag_y: flag_y.unwrap_or(INVALID_Y),
+                    flag_x,
+                    flag_y,
                 });
 
                 opp_tx
@@ -282,8 +282,8 @@ impl GameService {
             }
             GameMessage::Whisper {
                 piece,
-                x,
-                y,
+                target_x,
+                target_y,
                 flag_x,
                 flag_y,
             } => {
@@ -294,14 +294,14 @@ impl GameService {
 
                 let target = PieceInfo {
                     piece,
-                    x,
-                    y,
-                    flag_x: flag_x.unwrap_or(INVALID_X),
-                    flag_y: flag_y.unwrap_or(INVALID_Y),
+                    x: target_x,
+                    y: target_y,
+                    flag_x,
+                    flag_y,
                 };
                 let player = self.opponent_mut(pubkey).unwrap();
                 let attacker = player.piece.take().unwrap();
-                let piece_move = arb_piece(attacker, target);
+                let piece_move = compare_piece(attacker, target);
 
                 self.cur_player = pubkey;
                 let msg: Message = GameMessage::MoveResult(piece_move).try_into().unwrap();

@@ -26,8 +26,8 @@ pub struct PieceInfo {
     pub x: u32,
     pub y: u32,
 
-    pub flag_x: u32,
-    pub flag_y: u32,
+    pub flag_x: Option<u32>,
+    pub flag_y: Option<u32>,
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Deserialize_repr, Serialize_repr, Clone)]
@@ -48,25 +48,22 @@ pub struct PieceMove {
 
     pub attack_result: AttackResult,
 
-    pub flag_x: u32,
-    pub flag_y: u32,
-    pub opp_flag_x: u32,
-    pub opp_flag_y: u32,
+    pub flag_x: Option<u32>,
+    pub flag_y: Option<u32>,
+    pub opp_flag_x: Option<u32>,
+    pub opp_flag_y: Option<u32>,
 
     pub game_winner: u32,
 }
 
-pub const INVALID_X: u32 = 5u32;
-pub const INVALID_Y: u32 = 12u32;
-
-pub fn arb_piece(attacker: PieceInfo, target: PieceInfo) -> PieceMove {
+pub fn compare_piece(attacker: PieceInfo, target: PieceInfo) -> PieceMove {
     let attack_result: AttackResult;
     let mut victim = Piece::Empty;
     let mut opp_victim = Piece::Empty;
-    let mut flag_x = INVALID_X;
-    let mut flag_y = INVALID_Y;
-    let mut opp_flag_x = INVALID_X;
-    let mut opp_flag_y = INVALID_Y;
+    let mut flag_x = None;
+    let mut flag_y = None;
+    let mut opp_flag_x = None;
+    let mut opp_flag_y = None;
     let mut game_winner = 0;
 
     if target.piece == Piece::Empty {

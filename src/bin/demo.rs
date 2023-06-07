@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use aleo_rust::{Address, Testnet3};
 use land_battle_chess_rs::{
-    game_logic::{AttackResult, PieceMove, INVALID_X, INVALID_Y},
+    game_logic::{AttackResult, PieceMove},
     types::GameMessage,
 };
 
@@ -17,10 +17,10 @@ fn main() {
         target_x: 1,
         target_y: 2,
         attack_result: AttackResult::Draw,
-        opp_flag_x: INVALID_X,
-        opp_flag_y: INVALID_Y,
-        flag_x: 0,
-        flag_y: 0,
+        opp_flag_x: None,
+        opp_flag_y: None,
+        flag_x: Some(0),
+        flag_y: Some(0),
         game_winner: 0,
     };
     let msg = GameMessage::MoveResult(piece_move);

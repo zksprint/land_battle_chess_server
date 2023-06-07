@@ -60,8 +60,8 @@ pub enum GameMessage {
     Whisper {
         // 对手通知server，落子坐标棋子信息，如果piece 是司令，同时告知军棋坐标
         piece: Piece,
-        x: u32,
-        y: u32,
+        target_x: u32,
+        target_y: u32,
         flag_x: Option<u32>,
         flag_y: Option<u32>,
     },
