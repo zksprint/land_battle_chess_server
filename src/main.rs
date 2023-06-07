@@ -299,10 +299,11 @@ impl GameService {
                     flag_x: flag_x.unwrap_or(INVALID_X),
                     flag_y: flag_y.unwrap_or(INVALID_Y),
                 };
-                let player = self.player_mut(pubkey).unwrap();
+                let player = self.opponent_mut(pubkey).unwrap();
                 let attacker = player.piece.take().unwrap();
                 let piece_move = arb_piece(attacker, target);
 
+                self.cur_player = pubkey;
                 let msg: Message = GameMessage::MoveResult(piece_move).try_into().unwrap();
                 _ = player_tx.send(msg.clone()).await;
                 _ = opp_tx.send(msg).await;
@@ -311,11 +312,22 @@ impl GameService {
         }
         Ok(())
     }
+
     fn opponent(&self, player: Address<Testnet3>) -> Option<&Player> {
         if self.players.0.pubkey == player {
             Some(&self.players.1)
         } else if self.players.1.pubkey == player {
             Some(&self.players.0)
+        } else {
+            None
+        }
+    }
+
+    fn opponent_mut(&mut self, player: Address<Testnet3>) -> Option<&mut Player> {
+        if self.players.0.pubkey == player {
+            Some(&mut self.players.1)
+        } else if self.players.1.pubkey == player {
+            Some(&mut self.players.0)
         } else {
             None
         }
