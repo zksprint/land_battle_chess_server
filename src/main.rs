@@ -13,7 +13,9 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use colored::Colorize;
 use eyre::{bail, eyre, Context};
+use indoc::indoc;
 
 use futures::stream::SplitSink;
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -45,7 +47,7 @@ async fn main() -> eyre::Result<()> {
         .level_for("land_battle_chess_rs", log::LevelFilter::Trace)
         .apply()?;
 
-    info!("land battle server running...");
+    banner();
     dotenv::dotenv()?;
 
     let priv_key = std::env::var("ARBITER_PRIV_KEY").wrap_err("no arbiter privkey")?;
@@ -538,4 +540,20 @@ async fn handle_socket(ws: WebSocket, pubkey: Address<Testnet3>, game_tx: GameSe
     if let Err(e) = run(ws, pubkey, game_tx).await {
         error!("player ws, error: {:?}", e);
     }
+}
+
+fn banner() {
+    let banner = indoc! {
+        r#"
+
+    __                    __   ____        __  __  __   
+   / /   ____ _____  ____/ /  / __ )____ _/ /_/ /_/ /__ 
+  / /   / __ `/ __ \/ __  /  / __  / __ `/ __/ __/ / _ \
+ / /___/ /_/ / / / / /_/ /  / /_/ / /_/ / /_/ /_/ /  __/
+/_____/\__,_/_/ /_/\__,_/  /_____/\__,_/\__/\__/_/\___/ 
+                                                         
+        "#
+    };
+
+    info!("{}", banner.green().bold());
 }
