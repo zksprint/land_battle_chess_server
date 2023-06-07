@@ -1,7 +1,7 @@
 use std::convert::TryInto;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc};
 
-use aleo_rust::{Address, Testnet3};
+use aleo_rust::{Address, PrivateKey, Testnet3};
 use axum::{
     body::{self},
     extract::{
@@ -49,7 +49,7 @@ async fn main() -> eyre::Result<()> {
     dotenv::dotenv()?;
 
     let priv_key = std::env::var("ARBITER_PRIV_KEY").wrap_err("no arbiter privkey")?;
-    let arbiter = Address::<Testnet3>::from_str(&priv_key)
+    let arbiter = PrivateKey::<Testnet3>::from_str(&priv_key)
         .map_err(|e| eyre!(e))
         .wrap_err("parse arbiter privkey")?;
 
@@ -82,13 +82,14 @@ type GameId = u64;
 struct App {
     user_map: HashMap<Address<Testnet3>, User>,
     game_map: HashMap<GameId, Game>,
-    arbiter: Address<Testnet3>,
+    arbiter: (PrivateKey<Testnet3>, Address<Testnet3>),
 }
 
 impl App {
-    fn init(arbiter: Address<Testnet3>) -> Arc<RwLock<App>> {
+    fn init(arbiter: PrivateKey<Testnet3>) -> Arc<RwLock<App>> {
+        let pubkey = Address::try_from(arbiter).unwrap();
         let app = App {
-            arbiter,
+            arbiter: (arbiter, pubkey),
             user_map: HashMap::new(),
             game_map: HashMap::new(),
         };
@@ -378,7 +379,7 @@ async fn join(Query(query): Query<Join>, State(state): State<AppState>) -> impl 
         .filter(|u| u.access_code == access_code)
         .cloned()
         .collect();
-    let arbiter = write_state.arbiter;
+    let arbiter = write_state.arbiter.1;
 
     match usrs.len() {
         2 => {
