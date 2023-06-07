@@ -23,11 +23,17 @@ pub enum Piece {
 
 pub struct PieceInfo {
     pub piece: Piece,
-    pub x: u32,
-    pub y: u32,
 
     pub flag_x: Option<u32>,
     pub flag_y: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub struct MovePos {
+    pub x: u32,
+    pub y: u32,
+    pub target_x: u32,
+    pub target_y: u32,
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Deserialize_repr, Serialize_repr, Clone)]
@@ -56,7 +62,7 @@ pub struct PieceMove {
     pub game_winner: u32,
 }
 
-pub fn compare_piece(attacker: PieceInfo, target: PieceInfo) -> PieceMove {
+pub fn compare_piece(attacker: PieceInfo, target: PieceInfo, move_pos: MovePos) -> PieceMove {
     let attack_result: AttackResult;
     let mut victim = Piece::Empty;
     let mut opp_victim = Piece::Empty;
@@ -118,10 +124,10 @@ pub fn compare_piece(attacker: PieceInfo, target: PieceInfo) -> PieceMove {
     }
 
     PieceMove {
-        x: attacker.x,
-        y: attacker.y,
-        target_x: target.x,
-        target_y: target.y,
+        x: move_pos.x,
+        y: move_pos.y,
+        target_x: move_pos.target_x,
+        target_y: move_pos.target_y,
         attack_result,
         flag_x,
         flag_y,

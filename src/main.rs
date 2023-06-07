@@ -19,7 +19,7 @@ use indoc::indoc;
 
 use futures::stream::SplitSink;
 use futures::{sink::SinkExt, stream::StreamExt};
-use land_battle_chess_rs::game_logic::{compare_piece, PieceInfo};
+use land_battle_chess_rs::game_logic::{compare_piece, MovePos, PieceInfo};
 use land_battle_chess_rs::{setup_log_dispatch, types::*};
 use log::{error, info, warn};
 use structopt::StructOpt;
@@ -119,6 +119,7 @@ struct Player {
     pubkey: Address<Testnet3>,
     state: PlayerState,
     piece: Option<PieceInfo>,
+    move_pos: Option<MovePos>,
 }
 
 #[derive(Debug)]
@@ -260,32 +261,25 @@ impl GameService {
 
                 player.piece = Some(PieceInfo {
                     piece,
-                    x,
-                    y,
                     flag_x,
                     flag_y,
                 });
+                let move_pos = MovePos {
+                    x,
+                    y,
+                    target_x,
+                    target_y,
+                };
+                player.move_pos = Some(move_pos.clone());
 
-                opp_tx
-                    .send(
-                        GameMessage::PiecePos {
-                            x,
-                            y,
-                            target_x,
-                            target_y,
-                        }
-                        .try_into()
-                        .unwrap(),
-                    )
-                    .await
-                    .wrap_err("send opp")?;
+                let msg: Message = GameMessage::PiecePos(move_pos).try_into().unwrap();
+                opp_tx.send(msg).await.wrap_err("send opp")?;
             }
             GameMessage::Whisper {
                 piece,
-                target_x,
-                target_y,
                 flag_x,
                 flag_y,
+                ..
             } => {
                 if self.cur_player == pubkey {
                     warn!("[{}] unexpect whisper from {}", game_id, pubkey);
@@ -294,14 +288,15 @@ impl GameService {
 
                 let target = PieceInfo {
                     piece,
-                    x: target_x,
-                    y: target_y,
                     flag_x,
                     flag_y,
                 };
                 let player = self.opponent_mut(pubkey).unwrap();
-                let attacker = player.piece.take().unwrap();
-                let piece_move = compare_piece(attacker, target);
+                let (attacker, move_pos) = (
+                    player.piece.take().unwrap(),
+                    player.move_pos.take().unwrap(),
+                );
+                let piece_move = compare_piece(attacker, target, move_pos);
 
                 self.cur_player = pubkey;
                 let msg: Message = GameMessage::MoveResult(piece_move).try_into().unwrap();
@@ -368,11 +363,13 @@ impl GameService {
                     pubkey: player1,
                     state: PlayerState::Disconnected,
                     piece: None,
+                    move_pos: None,
                 },
                 Player {
                     pubkey: player2,
                     state: PlayerState::Disconnected,
                     piece: None,
+                    move_pos: None,
                 },
             ),
             cur_player: player1,

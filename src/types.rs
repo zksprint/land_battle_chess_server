@@ -3,7 +3,7 @@ use axum::extract::ws::Message;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-use crate::game_logic::{Piece, PieceMove};
+use crate::game_logic::{MovePos, Piece, PieceMove};
 
 #[serde_as]
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -50,18 +50,13 @@ pub enum GameMessage {
         flag_x: Option<u32>,
         flag_y: Option<u32>,
     },
-    PiecePos {
-        // server 通知对手，行棋路线
-        x: u32,
-        y: u32,
-        target_x: u32,
-        target_y: u32,
-    },
+    // server 通知对手，行棋路线
+    PiecePos(MovePos),
     Whisper {
         // 对手通知server，落子坐标棋子信息，如果piece 是司令，同时告知军棋坐标
         piece: Piece,
-        target_x: u32,
-        target_y: u32,
+        x: u32,
+        y: u32,
         flag_x: Option<u32>,
         flag_y: Option<u32>,
     },
