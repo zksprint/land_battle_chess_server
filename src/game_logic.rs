@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
+use strum::FromRepr;
 
-#[derive(Debug, PartialEq, PartialOrd, Eq, Deserialize_repr, Serialize_repr, Clone)]
+#[derive(
+    Debug, PartialEq, PartialOrd, Eq, Deserialize_repr, Serialize_repr, Copy, Clone, FromRepr,
+)]
 #[repr(u64)]
 pub enum Piece {
     Empty = 0,

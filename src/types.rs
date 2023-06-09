@@ -19,6 +19,10 @@ pub enum GameMessage {
         #[serde_as(as = "DisplayFromStr")]
         game_id: u64,
     },
+    RepeatedLogin {
+        #[serde_as(as = "DisplayFromStr")]
+        game_id: u64,
+    },
     Ready {
         #[serde_as(as = "DisplayFromStr")]
         game_id: u64,

@@ -26,3 +26,5 @@ serde_repr = "0.1.12"
 serde_with = "3.0.0"
 dotenv = "0.15.0"
 indoc = "2.0.1"
+strum = {version="0.24.1", features=["derive"]}
+tabled = "0.12.1"
