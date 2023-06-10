@@ -20,8 +20,7 @@ pub enum Piece {
     MajorGeneral = 10,
     General = 11,
     FieldMarshal = 12,
-    Unchanged = 15,
-    Opponent = 16,
+    Opponent = 13,
 }
 
 pub struct PieceInfo {

@@ -67,7 +67,7 @@ impl Board {
             return false;
         }
 
-        let row = y * 5;
+        let row = y * 4;
         let piece = (piece as u64) << row;
         self.lines[x as usize] |= piece;
         true
@@ -79,8 +79,8 @@ impl Board {
     }
 
     fn get_piece_from_line(x: u64, y: u64) -> u64 {
-        let mask = 0x1f;
-        let row = y * 5;
+        let mask = 0xf;
+        let row = y * 4;
         ((mask << row) & x) >> row
     }
 }
@@ -99,7 +99,7 @@ pub fn piece_name(piece: Piece) -> &'static str {
         Piece::MajorGeneral => "师长",
         Piece::General => "军长",
         Piece::FieldMarshal => "司令",
-        Piece::Opponent => "对手",
+        Piece::Opponent => "XXX",
         _ => "",
     }
 }

@@ -1,6 +1,6 @@
 use std::{fs::read_to_string, path::PathBuf};
 
-use land_battle_chess_rs::{board_utils::Board, game_logic::Piece};
+use land_battle_chess::{board_utils::Board, game_logic::Piece};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -26,6 +26,17 @@ fn main() {
     let board = Board::gen(pieces, opt.player2);
     println!("{:?}", board);
     for i in 0..5 {
-        println!("line[{}]: {}", i, board.lines[i]);
+        println!("LINE{}={}", i, board.lines[i]);
     }
+
+    let pieces = [
+        243944965961916,
+        243944752439345,
+        243944969889843,
+        243944969494674,
+        243944969840532,
+    ];
+    let board = Board::new(pieces);
+    println!("{:?}", board);
+    println!("{:?}", board.get_piece(0, 6));
 }

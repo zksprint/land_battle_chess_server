@@ -19,8 +19,8 @@ use indoc::indoc;
 
 use futures::stream::SplitSink;
 use futures::{sink::SinkExt, stream::StreamExt};
-use land_battle_chess_rs::game_logic::{compare_piece, MovePos, PieceInfo};
-use land_battle_chess_rs::{setup_log_dispatch, types::*};
+use land_battle_chess::game_logic::{compare_piece, MovePos, PieceInfo};
+use land_battle_chess::{setup_log_dispatch, types::*};
 use log::{error, info, warn};
 use structopt::StructOpt;
 
