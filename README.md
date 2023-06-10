@@ -10,11 +10,14 @@ cargo build --release --bin gen_board
 
 **.json config**
 
-Refer to the [configuration file](https://github.com/zksprint/land_battle_chess_server/tree/main/data/pieces.json).
+Refer to the [configuration file](https://github.com/zksprint/land_battle_chess_server/tree/main/data).
 
 **run**
 ```
-./target/release/gen_board --path ./data/pieces.json
+./target/release/gen_board --path ./data/player1.json
+```
+```
+./target/release/gen_board --path ./data/player2.json --player2
 ```
 
 2、land_battle_chess server

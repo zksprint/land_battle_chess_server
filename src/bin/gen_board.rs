@@ -26,17 +26,6 @@ fn main() {
     let board = Board::gen(pieces, opt.player2);
     println!("{:?}", board);
     for i in 0..5 {
-        println!("LINE{}={}", i, board.lines[i]);
+        println!("LINE{}={}u64", i, board.lines[i]);
     }
-
-    let pieces = [
-        243944965961916,
-        243944752439345,
-        243944969889843,
-        243944969494674,
-        243944969840532,
-    ];
-    let board = Board::new(pieces);
-    println!("{:?}", board);
-    println!("{:?}", board.get_piece(0, 6));
 }
